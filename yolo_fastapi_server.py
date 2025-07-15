@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Any
-import io
 from PIL import Image
 import numpy as np
 import cv2
@@ -27,8 +26,10 @@ class_mapping = {
     '8': 'bia_cat_tong'
 }
 
+# Khởi tạo ứng dụng FastAPI
 app = FastAPI()
 
+# CORS cho phép tất cả các origin (cho frontend gọi API)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,13 +38,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model
+# Load mô hình YOLO
 try:
     model = YOLO('best.pt')
 except Exception as e:
     logging.error(f"Could not load model: {e}")
     raise RuntimeError("Model load failed")
 
+# Chuyển đổi ảnh giữa PIL và OpenCV
 def pil_to_cv2(image: Image.Image) -> np.ndarray:
     return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
@@ -68,16 +70,21 @@ def convert_numpy_types(obj: Any):
         return {k: convert_numpy_types(v) for k, v in obj.items()}
     return obj
 
+# Route gốc để kiểm tra server
+@app.get("/")
+def root():
+    return {"message": "API is working!"}
+
+# Route chính để xử lý ảnh và trả về kết quả nhận diện
 @app.post("/det")
 async def detection(file: UploadFile = File(...)):
     try:
         image_data = await file.read()
         image = Image.open(BytesIO(image_data))
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=400, detail="Cannot read image")
 
     results = model(source=image, conf=0.3, iou=0.5)
-
     img_cv2 = pil_to_cv2(image)
     class_counts = {}
     det = [0] * len(class_mapping)
@@ -96,9 +103,7 @@ async def detection(file: UploadFile = File(...)):
     img_result = cv2_to_pil(img_cv2)
     base64_original = encode_image_to_base64(image)
     base64_result = encode_image_to_base64(img_result)
-    print(class_counts)
-    print(det)
-    print(class_mapping)
+
     return {
         "data": {
             "base64_r": base64_result,
@@ -111,7 +116,3 @@ async def detection(file: UploadFile = File(...)):
         "msg": "success",
         "code": 200
     }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
