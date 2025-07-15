@@ -39,7 +39,7 @@ app.add_middleware(
 
 # Load model
 try:
-    model = YOLO('D:/THT_2025/Green4/backend/best.pt')
+    model = YOLO('best.pt')
 except Exception as e:
     logging.error(f"Could not load model: {e}")
     raise RuntimeError("Model load failed")
