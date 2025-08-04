@@ -9,9 +9,9 @@ from ultralytics import YOLO
 import logging
 from io import BytesIO
 import base64
-from rembg import remove
+import gc  # để giải phóng bộ nhớ
 
-# Logging for debugging
+# Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
 # Class mapping: 6 lớp
@@ -24,10 +24,9 @@ class_mapping = {
     5: 'straw'
 }
 
-# FastAPI app
 app = FastAPI()
 
-# Enable CORS (frontend can call)
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,21 +35,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load YOLO model
+# Load YOLO model once
 try:
     model = YOLO('best.pt')
 except Exception as e:
     logging.error(f"Could not load model: {e}")
     raise RuntimeError("Model load failed")
 
-# PIL ↔ OpenCV conversions
+# Helper functions
 def pil_to_cv2(image: Image.Image) -> np.ndarray:
     return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
 def cv2_to_pil(image: np.ndarray) -> Image.Image:
     return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
-# Convert image to base64
 def encode_image_to_base64(image: Image.Image) -> str:
     if image.mode == "RGBA":
         image = image.convert("RGB")
@@ -58,37 +56,10 @@ def encode_image_to_base64(image: Image.Image) -> str:
     image.save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-# Convert numpy to Python native types
-def convert_numpy_types(obj: Any):
-    if isinstance(obj, (np.integer,)):
-        return int(obj)
-    elif isinstance(obj, (np.floating,)):
-        return float(obj)
-    elif isinstance(obj, list):
-        return [convert_numpy_types(i) for i in obj]
-    elif isinstance(obj, dict):
-        return {k: convert_numpy_types(v) for k, v in obj.items()}
-    return obj
-
-# Remove background and paste on white
-def remove_background_and_paste_on_white(image: Image.Image) -> Image.Image:
-    try:
-        no_bg = remove(image)
-        no_bg = Image.open(BytesIO(no_bg)).convert("RGBA")
-    except Exception as e:
-        logging.error(f"Background removal failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to remove background")
-
-    white_bg = Image.new("RGBA", no_bg.size, (255, 255, 255, 255))
-    combined = Image.alpha_composite(white_bg, no_bg)
-    return combined.convert("RGB")
-
-# Root route
 @app.get("/")
 def root():
     return {"message": "API is working!"}
 
-# Detection route
 @app.post("/det")
 async def detection(file: UploadFile = File(...)):
     try:
@@ -97,10 +68,23 @@ async def detection(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Cannot read image")
 
-    # ❄️ Remove background and paste on white
-    image = remove_background_and_paste_on_white(image)
+    # ✅ Import rembg and remove background only when needed
+    try:
+        from rembg import remove
+        no_bg = remove(image)
+        no_bg = Image.open(BytesIO(no_bg)).convert("RGBA")
+        white_bg = Image.new("RGBA", no_bg.size, (255, 255, 255, 255))
+        image = Image.alpha_composite(white_bg, no_bg).convert("RGB")
+    except Exception as e:
+        logging.error(f"Background removal failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to remove background")
+    finally:
+        # ✅ Optional: Remove rembg module from memory (symbolic), force garbage collection
+        del no_bg
+        del white_bg
+        gc.collect()
 
-    # 🧠 YOLOv8 detection
+    # 🔍 Run detection
     results = model(source=image, conf=0.3, iou=0.5)
     img_cv2 = pil_to_cv2(image)
     class_counts = {}
@@ -118,15 +102,11 @@ async def detection(file: UploadFile = File(...)):
             if cls_id < len(det):
                 det[cls_id] += 1
 
-    # ✨ Encode images
     img_result = cv2_to_pil(img_cv2)
-    base64_original = encode_image_to_base64(image)
-    base64_result = encode_image_to_base64(img_result)
 
-    # 📦 Return result
     return {
         "data": {
-            "base64_r": base64_result,
+            "base64_r": encode_image_to_base64(img_result),
             "class_mapping": class_mapping,
             "result": {
                 "dict": class_counts,
@@ -136,6 +116,3 @@ async def detection(file: UploadFile = File(...)):
         "msg": "success",
         "code": 200
     }
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=10000)
