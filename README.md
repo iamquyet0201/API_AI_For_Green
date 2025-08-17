@@ -14,13 +14,6 @@ Dự án cung cấp một dịch vụ REST API dùng **YOLOv8** để nhận di�
 - (Tuỳ chọn) `rembg` để loại nền/tiền xử lý ảnh
 - cURL / Swagger UI cho kiểm thử API
 
-## Cấu trúc thư mục
-.
-├── best.pt # Trained YOLOv8 model (custom dataset)
-├── requirements.txt # Danh sách thư viện
-├── yolo_fastapi_server.py # Mã nguồn FastAPI server
-└── README.md # Tài liệu này
-
 ## Yêu cầu hệ thống
 - Python 3.9+ (khuyến nghị 3.10/3.11)
 - pip, venv
